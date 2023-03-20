@@ -53,11 +53,11 @@ class Detect(nn.Module):
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
         self.inplace = inplace  # use inplace ops (e.g. slice assignment)
 
-    def forward(self, x):
+    def forward(self, x):  # 未进入epoch进行训练之前也多次执行了这个函数，不知道为什么，是因为warmup等操作吗
         z = []  # inference output
         for i in range(self.nl):
             x[i] = self.m[i](x[i])  # conv
-            bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
+            bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85) # 多出来的三代表本特征层中有三种anchor
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # inference
@@ -166,6 +166,7 @@ class DetectionModel(BaseModel):
     # YOLOv5 detection model
     def __init__(self, cfg='yolov5s.yaml', ch=3, nc=None, anchors=None):  # model, input channels, number of classes
         super().__init__()
+        # 加载配置文件
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
         else:  # is *.yaml
@@ -174,8 +175,8 @@ class DetectionModel(BaseModel):
             with open(cfg, encoding='ascii', errors='ignore') as f:
                 self.yaml = yaml.safe_load(f)  # model dict
 
-        # Define model
-        ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
+        # Define model 使用配置文件创建模型 
+        ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels 从yaml中找'ch'，如果没有找到就使用形参ch
         if nc and nc != self.yaml['nc']:
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
             self.yaml['nc'] = nc  # override yaml value
@@ -184,7 +185,7 @@ class DetectionModel(BaseModel):
             self.yaml['anchors'] = round(anchors)  # override yaml value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
         self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
-        self.inplace = self.yaml.get('inplace', True)
+        self.inplace = self.yaml.get('inplace', True) # use memory-efficient inplace activations
 
         # Build strides, anchors
         m = self.model[-1]  # Detect()
@@ -192,9 +193,9 @@ class DetectionModel(BaseModel):
             s = 256  # 2x min stride
             m.inplace = self.inplace
             forward = lambda x: self.forward(x)[0] if isinstance(m, Segment) else self.forward(x)
-            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
-            check_anchor_order(m)
-            m.anchors /= m.stride.view(-1, 1, 1)
+            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # 构建一张sxs的图像，输入到网络中得到三个输出（三个特征图）。x.shape[-2]代表特征图的大小。s / x.shape[-2]代表从原图到输出的特征图，缩小了多少。
+            check_anchor_order(m) # anchor的顺序和stride的顺序是否一样，如果不一样，就帮你调整一下
+            m.anchors /= m.stride.view(-1, 1, 1)  # anchor是生成在特征图上，所以这里使用stride调整anchor的大小，这样anchor的大小就与特征图的大小相对应了。
             self.stride = m.stride
             self._initialize_biases()  # only run once
 
@@ -296,32 +297,32 @@ class ClassificationModel(BaseModel):
         self.model = None
 
 
-def parse_model(d, ch):  # model_dict, input_channels(3)
+def parse_model(d, ch):  # model_dict, input_channels(3):[3]
     # Parse a YOLOv5 model.yaml dictionary
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     anchors, nc, gd, gw, act = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d.get('activation')
     if act:
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
         LOGGER.info(f"{colorstr('activation:')} {act}")  # print
-    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
-    no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
+    na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors 由于每个anchor都有长和宽所以这里需要//2
+    no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)  5=xywh+conf 其中conf表示是否有物体
 
-    layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
-        m = eval(m) if isinstance(m, str) else m  # eval strings
+    layers, save, c2 = [], [], ch[-1]  # layers保存每一层网络, savelist：有些层后面需要进行concat等操作，所以保存在savelistz中, ch out
+    for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # 如from:-1, number:1, module:'Conv', args:[64, 6, 2, 2]， 即[-1, 1, Conv, [64, 6, 2, 2]
+        m = eval(m) if isinstance(m, str) else m  # eval strings 通过eval(m)将字符串转换为对应的类
         for j, a in enumerate(args):
             with contextlib.suppress(NameError):
-                args[j] = eval(a) if isinstance(a, str) else a  # eval strings
+                args[j] = eval(a) if isinstance(a, str) else a  # eval strings  通过eval(m)将字符串转换为对应的类型
 
-        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
+        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain 对于n>1的层，进行深度进行调整，即n=round(n*gd) round四舍五入
         if m in {
                 Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, MixConv2d, Focus, CrossConv,
-                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:
-            c1, c2 = ch[f], args[0]
-            if c2 != no:  # if not output
-                c2 = make_divisible(c2 * gw, 8)
+                BottleneckCSP, C3, C3TR, C3SPP, C3Ghost, nn.ConvTranspose2d, DWConvTranspose2d, C3x}:  # 判断m属于哪个类。当我们添加自己的模块的时候，需要在这里添加自己的模块名
+            c1, c2 = ch[f], args[0] # c1:输入通道数，c2:输出通道数
+            if c2 != no:  # 如果c2不等于no，即不是最后一层。那么就进行通道数的调整
+                c2 = make_divisible(c2 * gw, 8) # 通道数调整为8的倍数，因为8对于GPU来说是最优的
 
-            args = [c1, c2, *args[1:]]
+            args = [c1, c2, *args[1:]] # 由于args会作为参数输入到对应的模块中，故这里调整输入到模块m中的参数args。当我们添加自己的模块的时候，也需要对输入模块的参数进行调整
             if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
                 args.insert(2, n)  # number of repeats
                 n = 1
@@ -343,16 +344,16 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         else:
             c2 = ch[f]
 
-        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
-        t = str(m)[8:-2].replace('__main__.', '')  # module type
+        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # 如果n>1就代表要生成此模块多次
+        t = str(m)[8:-2].replace('__main__.', '')  # module type 对象m的类名
         np = sum(x.numel() for x in m_.parameters())  # number params
-        m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
+        m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params 将信息都记录在m_中
         LOGGER.info(f'{i:>3}{str(f):>18}{n_:>3}{np:10.0f}  {t:<40}{str(args):<30}')  # print
         save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
         layers.append(m_)
         if i == 0:
             ch = []
-        ch.append(c2)
+        ch.append(c2) # 将c2保存在ch，这样我们就可以通过ch[f]来取出上一层输出的通道数
     return nn.Sequential(*layers), sorted(save)
 
 
@@ -370,7 +371,7 @@ if __name__ == '__main__':
     device = select_device(opt.device)
 
     # Create model
-    im = torch.rand(opt.batch_size, 3, 640, 640).to(device)
+    im = torch.rand(opt.batch_size, 3, 640, 640).to(device) 
     model = Model(opt.cfg).to(device)
 
     # Options

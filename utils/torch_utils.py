@@ -318,7 +318,7 @@ def copy_attr(a, b, include=(), exclude=()):
 def smart_optimizer(model, name='Adam', lr=0.001, momentum=0.9, decay=1e-5):
     # YOLOv5 3-param group optimizer: 0) weights with decay, 1) weights no decay, 2) biases no decay
     g = [], [], []  # optimizer parameter groups
-    bn = tuple(v for k, v in nn.__dict__.items() if 'Norm' in k)  # normalization layers, i.e. BatchNorm2d()
+    bn = tuple(v for k, v in nn.__dict__.items() if 'Norm' in k)  # normalization layers, i.e. BatchNorm2d() 获取pytorch中支持的归一化层
     for v in model.modules():
         for p_name, p in v.named_parameters(recurse=0):
             if p_name == 'bias':  # bias (no decay)
@@ -335,12 +335,12 @@ def smart_optimizer(model, name='Adam', lr=0.001, momentum=0.9, decay=1e-5):
     elif name == 'RMSProp':
         optimizer = torch.optim.RMSprop(g[2], lr=lr, momentum=momentum)
     elif name == 'SGD':
-        optimizer = torch.optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True)
+        optimizer = torch.optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True) # 要优化的变量是g[2]
     else:
         raise NotImplementedError(f'Optimizer {name} not implemented.')
 
-    optimizer.add_param_group({'params': g[0], 'weight_decay': decay})  # add g0 with weight_decay
-    optimizer.add_param_group({'params': g[1], 'weight_decay': 0.0})  # add g1 (BatchNorm2d weights)
+    optimizer.add_param_group({'params': g[0], 'weight_decay': decay})  # add g0 with weight_decay 对所有卷积层的权重进行权重衰减
+    optimizer.add_param_group({'params': g[1], 'weight_decay': 0.0})  # add g1 (BatchNorm2d weights)  权重衰减是什么？答：防止过拟合 https://zhuanlan.zhihu.com/p/409346926
     LOGGER.info(f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}) with parameter groups "
                 f'{len(g[1])} weight(decay=0.0), {len(g[0])} weight(decay={decay}), {len(g[2])} bias')
     return optimizer

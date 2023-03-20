@@ -1,18 +1,18 @@
 # YOLOv5 🚀 by Ultralytics, GPL-3.0 license
 
 # Parameters
-nc: 80  # number of classes
-depth_multiple: 0.33  # model depth multiple
-width_multiple: 0.50  # layer channel multiple
+nc: 2  # number of classes 是不是人，这里是写成2吗
+depth_multiple: 0.33  # model depth multiple  对C3的个数进行调整，如[-1, 3, C3, [128]]代表C3的个数不是3，而是3x0.33等于1
+width_multiple: 0.50  # layer channel multiple 对COnv的卷积核数进行调整，如[-1, 1, 如Conv, [64, 6, 2, 2]]代表COnv的卷积核个数不是64，而是64x0.5等于32
 anchors:
-  - [10,13, 16,30, 33,23]  # P3/8
+  - [10,13, 16,30, 33,23]  # P3/8 两两代表一个anchor尺度，如（10，13）、(16,30), (33,23)，总共三种尺度
   - [30,61, 62,45, 59,119]  # P4/16
   - [116,90, 156,198, 373,326]  # P5/32
 
 # YOLOv5 v6.0 backbone
 backbone:
   # [from, number, module, args]
-  [[-1, 1, Conv, [64, 6, 2, 2]],  # 0-P1/2
+  [[-1, 1, Conv, [64, 6, 2, 2]],  # 0-P1/2   # 这里的2代表缩小为原来的一般
    [-1, 1, Conv, [128, 3, 2]],  # 1-P2/4
    [-1, 3, C3, [128]],
    [-1, 1, Conv, [256, 3, 2]],  # 3-P3/8
@@ -45,4 +45,5 @@ head:
    [-1, 3, C3, [1024, False]],  # 23 (P5/32-large)
 
    [[17, 20, 23], 1, Detect, [nc, anchors]],  # Detect(P3, P4, P5)
+  # [[17], 1, Detect, [nc, anchors]],  # Detect(P3, P4, P5)
   ]
